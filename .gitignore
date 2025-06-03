@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+
+# VSCode
+.vscode/
+.history/
+
+# PyCharm/JetBrains IDEs
+.idea/
+
+# MacOS
+.DS_Store
+
+# Virtual environments
+.env/
+.venv/
+env/
+venv/
+
+# AWS credentials (never version!)
+.aws/
+*.pem
+
+# Dependency lock files (if using pipenv or poetry)
+Pipfile.lock
+poetry.lock
+
+# Docker override files
+docker-compose.override.yml
+
+# Backup and manifest files
+*~
+*.bak
+*.manifest
+*.spec
+
+# Temporary files and logs
+*.log
+*.tmp
+*.swp
+
+# Test and coverage reports
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+.eggs/
+.cache/
+.pytest_cache/
+
+# Jupyter Notebooks checkpoints
+.ipynb_checkpoints/
+
+# Other sensitive files
+*.env
+.env.*
+secrets.*
