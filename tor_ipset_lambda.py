@@ -4,26 +4,26 @@ import json
 import os
 from ipaddress import ip_address
 
-# Configurações principais do IPSet e AWS
+# Main IPSet and AWS settings
 IPSET_NAME = "Tor-IPSet"
-IPSET_SCOPE = "CLOUDFRONT"  # ou "REGIONAL" se não for CloudFront
-AWS_REGION = "us-east-1"    # Região obrigatória para CLOUDFRONT
+IPSET_SCOPE = "CLOUDFRONT"  # or "REGIONAL" if not CloudFront
+AWS_REGION = "us-east-1"    # Required region for CLOUDFRONT
 
-# Inicializa clientes boto3 para WAFv2 e SNS
+# Initialize boto3 clients for WAFv2 and SNS
 waf = boto3.client("wafv2", region_name=AWS_REGION)
 sns = boto3.client("sns")
 
-# Lê o ARN do tópico SNS da variável de ambiente
+# Read the SNS topic ARN from the environment variable
 SNS_TOPIC_ARN = os.getenv("SNS_TOPIC_ARN")
 
-# Busca a lista de IPs de exit nodes do TorBulkExitList
+# Fetch the list of exit node IPs from TorBulkExitList
 def fetch_torbulkexitlist():
     resp = requests.get("https://check.torproject.org/torbulkexitlist")
-    resp.raise_for_status()  # Lança exceção se a requisição falhar
-    # Retorna um set de IPs, um por linha
+    resp.raise_for_status()  # Raises exception if the request fails
+    # Returns a set of IPs, one per line
     return set(line.strip() for line in resp.text.splitlines() if line.strip())
 
-# Busca IPs de exit nodes via API Onionoo
+# Fetch exit node IPs via Onionoo API
 def fetch_onionoo_exit_addresses():
     exit_ips = set()
     url = "https://onionoo.torproject.org/details?flag=Exit&running=true"
@@ -33,12 +33,12 @@ def fetch_onionoo_exit_addresses():
     for relay in data.get("relays", []):
         for ip in relay.get("exit_addresses", []):
             try:
-                exit_ips.add(str(ip_address(ip)))  # Valida e adiciona IP
+                exit_ips.add(str(ip_address(ip)))  # Validate and add IP
             except ValueError:
-                continue  # Ignora IPs inválidos
+                continue  # Ignore invalid IPs
     return exit_ips
 
-# Localiza e retorna o IPSet existente pelo nome e escopo, incluindo o LockToken
+# Locate and return the existing IPSet by name and scope, including the LockToken
 def get_ipset():
     next_marker = None
     while True:
@@ -60,19 +60,19 @@ def get_ipset():
             next_marker = response["NextMarker"]
         else:
             break
-    raise Exception(f"🚨 WAF - IPSet '{IPSET_NAME}' não encontrado.")
+    raise Exception(f"🚨 WAF - IPSet '{IPSET_NAME}' not found.")
 
-# Atualiza o IPSet no AWS WAF, substituindo os IPs atuais pelo novo conjunto
+# Update the IPSet in AWS WAF, replacing the current IPs with the new set
 def update_ipset(new_ips):
     ipset = get_ipset()
     current_ips = set(ipset["Addresses"])
-    desired_ips = set(f"{ip}/32" for ip in new_ips)  # Formato exigido pelo WAF
+    desired_ips = set(f"{ip}/32" for ip in new_ips)  # Format required by WAF
 
     if current_ips == desired_ips:
-        print("Nenhuma mudança detectada no IPSet.")
-        return False, len(desired_ips)  # Não houve atualização, mas é sucesso
+        print("No changes detected in the IPSet.")
+        return False, len(desired_ips)  # No update, but success
 
-    # Atualiza o IPSet na AWS
+    # Update the IPSet in AWS
     waf.update_ip_set(
         Name=ipset["Name"],
         Scope=IPSET_SCOPE,
@@ -80,40 +80,39 @@ def update_ipset(new_ips):
         LockToken=ipset["LockToken"],
         Addresses=sorted(list(desired_ips))
     )
-    print("IPSet atualizado com sucesso.")
-    return True, len(desired_ips)  # Atualização feita
+    print("IPSet updated successfully.")
+    return True, len(desired_ips)  # Update done
 
-# Função principal do Lambda
+# Lambda main function
 def lambda_handler(event, context):
     result_message = ""
     try:
-        print("Obtendo listas de IPs da rede Tor...")
-        torbulk_ips = fetch_torbulkexitlist()           # Busca lista TorBulk
-        onionoo_ips = fetch_onionoo_exit_addresses()    # Busca lista Onionoo
-        combined_ips = torbulk_ips.union(onionoo_ips)   # Junta e deduplica IPs
-        print(f"Total de IPs combinados: {len(combined_ips)}")
+        print("Getting Tor network IP lists...")
+        torbulk_ips = fetch_torbulkexitlist()           # Fetch TorBulk list
+        onionoo_ips = fetch_onionoo_exit_addresses()    # Fetch Onionoo list
+        combined_ips = torbulk_ips.union(onionoo_ips)   # Combine and deduplicate IPs
+        print(f"Total combined IPs: {len(combined_ips)}")
 
-        updated, ip_count = update_ipset(combined_ips)  # Atualiza IPSet
+        updated, ip_count = update_ipset(combined_ips)  # Update IPSet
         if updated:
-            result_message = f"✅ O IPSet '{IPSET_NAME}' foi atualizado e tem agora {ip_count} IPs."
+            result_message = f"✅ The IPSet '{IPSET_NAME}' was updated and now has {ip_count} IPs."
         else:
-            result_message = f"👍 O IPSet '{IPSET_NAME}' não precisou de atualização. Continua com ({ip_count} IPs)."
+            result_message = f"👍 The IPSet '{IPSET_NAME}' did not need updating. Still has ({ip_count} IPs)."
     except Exception as e:
-        result_message = f"Erro durante execução: {e}"
+        result_message = f"Error during execution: {e}"
         if SNS_TOPIC_ARN:
             sns.publish(
                 TopicArn=SNS_TOPIC_ARN,
-                Subject="❌ Erro na execução do Lambda WAF - IPSet TOR Network Update",
+                Subject="❌ Error in Lambda WAF execution - IPSet TOR Network Update",
                 Message=result_message
             )
         print(result_message)
-        raise  # Garante que o erro seja registrado como falha no Lambda
+        raise  # Ensures the error is logged as a Lambda failure
     else:
-        # Só notifica sucesso se não houve erro
+        # Only notify success if there was no error
         if SNS_TOPIC_ARN:
             sns.publish(
                 TopicArn=SNS_TOPIC_ARN,
-                Subject="🔔 Resultado da execução do Lambda WAF - IPSet TOR Network Update",
+                Subject="🔔 Lambda WAF execution result - IPSet TOR Network Update",
                 Message=result_message
             )
-        print(result_message)

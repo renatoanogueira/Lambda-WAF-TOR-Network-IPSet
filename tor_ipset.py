@@ -3,25 +3,24 @@ import boto3
 import json
 from ipaddress import ip_address
 
+# Settings
+IPSET_NAME = "TOR-IPSet"            # Name of the IPSet created in WAF
+IPSET_SCOPE = "CLOUDFRONT"          # Can be "REGIONAL" or "CLOUDFRONT"
+AWS_REGION = "us-east-1"            # AWS region where the IPSet is
 
-# Configurações
-IPSET_NAME = "TOR-IPSet"            # Nome do IPSet criado no WAF
-IPSET_SCOPE = "CLOUDFRONT"                       # Pode ser "REGIONAL" ou "CLOUDFRONT"
-AWS_REGION = "us-east-1"                       # Região AWS onde o IPSet está
-
-# Inicializa o cliente boto3 para o WAFv2
+# Initialize the boto3 client for WAFv2
 waf = boto3.client("wafv2", region_name=AWS_REGION)
 
-# Função para buscar a lista de exit nodes da TorBulkExitList
-# Esta lista contém apenas IPs, um por linha
+# Function to fetch the list of exit nodes from TorBulkExitList
+# This list contains only IPs, one per line
 
 def fetch_torbulkexitlist():
     resp = requests.get("https://check.torproject.org/torbulkexitlist")
     resp.raise_for_status()
     return set(line.strip() for line in resp.text.splitlines() if line.strip())
 
-# Função para buscar IPs de exit nodes através da API Onionoo
-# Retorna um conjunto de IPs listados no campo 'exit_addresses'
+# Function to fetch exit node IPs through the Onionoo API
+# Returns a set of IPs listed in the 'exit_addresses' field
 
 def fetch_onionoo_exit_addresses():
     exit_ips = set()
@@ -34,10 +33,10 @@ def fetch_onionoo_exit_addresses():
             try:
                 exit_ips.add(str(ip_address(ip)))
             except ValueError:
-                continue  # Ignora IPs inválidos
+                continue  # Ignore invalid IPs
     return exit_ips
 
-# Função que localiza e retorna um IPSet existente pelo nome e escopo
+# Function that locates and returns an existing IPSet by name and scope
 
 def get_ipset():
     next_marker = None
@@ -54,24 +53,24 @@ def get_ipset():
                     Id=ipset_summary["Id"]
                 )
                 ipset = ipset_response["IPSet"]
-                ipset["LockToken"] = ipset_response["LockToken"]  # Adiciona o LockToken ao dict
+                ipset["LockToken"] = ipset_response["LockToken"]  # Add LockToken to dict
                 return ipset
         if "NextMarker" in response:
             next_marker = response["NextMarker"]
         else:
             break
-    raise Exception(f"IPSet '{IPSET_NAME}' não encontrado.")
+    raise Exception(f"IPSet '{IPSET_NAME}' not found.")
 
-# Função para atualizar o IPSet no AWS WAF
-# Substitui o conjunto atual de IPs pelo novo conjunto combinado
+# Function to update the IPSet in AWS WAF
+# Replaces the current set of IPs with the new combined set
 
 def update_ipset(new_ips):
     ipset = get_ipset()
     current_ips = set(ipset["Addresses"])
-    desired_ips = set(f"{ip}/32" for ip in new_ips)  # Formato exigido pelo WAF
+    desired_ips = set(f"{ip}/32" for ip in new_ips)  # Format required by WAF
 
     if current_ips == desired_ips:
-        print("Nenhuma mudança detectada no IPSet.")
+        print("No changes detected in the IPSet.")
         return
 
     response = waf.update_ip_set(
@@ -81,26 +80,26 @@ def update_ipset(new_ips):
         LockToken=ipset["LockToken"],
         Addresses=sorted(list(desired_ips))
     )
-    print("IPSet atualizado com sucesso.")
+    print("IPSet updated successfully.")
 
-# Função principal: coleta as listas, deduplica, compara e atualiza
+# Main function: collects the lists, deduplicates, compares and updates
 
 def main():
     try:
-        print("Obtendo listas de IPs da rede Tor...")
+        print("Getting Tor network IP lists...")
         torbulk_ips = fetch_torbulkexitlist()
         onionoo_ips = fetch_onionoo_exit_addresses()
 
         combined_ips = torbulk_ips.union(onionoo_ips)
-        print(f"Total de IPs combinados: {len(combined_ips)}")
-        print("Exemplo de IPs combinados:")
-        for ip in list(sorted(combined_ips))[:20]:  # Mostra os 20 primeiros para não poluir o terminal
+        print(f"Total combined IPs: {len(combined_ips)}")
+        print("Example of combined IPs:")
+        for ip in list(sorted(combined_ips))[:20]:  # Show the first 20 to avoid cluttering the terminal
             print(ip)
-        # print(sorted(combined_ips))  # Descomente se quiser ver todos
+        # print(sorted(combined_ips))  # Uncomment if you want to see all
 
-        update_ipset(combined_ips)  # Agora a atualização será feita de verdade!
+        update_ipset(combined_ips)  # Now the update will actually be performed!
     except Exception as e:
-        print(f"Erro durante execução: {e}")
+        print(f"Error during execution: {e}")
 
 if __name__ == "__main__":
     main()
